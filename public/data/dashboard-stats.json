@@ -1,0 +1,27 @@
+{
+  "todayOrders": 287,
+  "todayConverted": 274,
+  "todayFailed": 13,
+  "todayInvoices": 512,
+  "dailyStats": [
+    {"date": "2026-03-10", "orders": 245, "converted": 238, "invoices": 478},
+    {"date": "2026-03-11", "orders": 312, "converted": 298, "invoices": 534},
+    {"date": "2026-03-12", "orders": 278, "converted": 271, "invoices": 501},
+    {"date": "2026-03-13", "orders": 301, "converted": 289, "invoices": 525},
+    {"date": "2026-03-14", "orders": 267, "converted": 260, "invoices": 489},
+    {"date": "2026-03-15", "orders": 293, "converted": 281, "invoices": 510},
+    {"date": "2026-03-16", "orders": 287, "converted": 274, "invoices": 512}
+  ],
+  "recentActivity": [
+    {"time": "2026-03-16T09:45:00", "action": "엑셀 변환", "detail": "다비치안경 OMS 125건 변환 완료", "status": "success"},
+    {"time": "2026-03-16T09:42:00", "action": "매핑 오류", "detail": "미매핑 거래처 3건 발견 - 세종점, 여수점, 목포점", "status": "error"},
+    {"time": "2026-03-16T09:38:00", "action": "송장 발행", "detail": "로젠택배 송장 48건 발행 완료", "status": "success"},
+    {"time": "2026-03-16T09:35:00", "action": "엑셀 변환", "detail": "안경매니저 OMS 89건 변환 완료", "status": "success"},
+    {"time": "2026-03-16T09:30:00", "action": "박스 분할", "detail": "출고 30건 → 송장 52건 분할 생성", "status": "info"},
+    {"time": "2026-03-16T09:25:00", "action": "매핑 업데이트", "detail": "품목 매핑 2건 추가 (렌즈보호필름, 고급케이스)", "status": "info"},
+    {"time": "2026-03-16T09:20:00", "action": "송장 재발행", "detail": "LOGEN-20260316-00023 재발행 처리", "status": "success"},
+    {"time": "2026-03-16T09:15:00", "action": "매핑 오류", "detail": "미매핑 품목 5건 발견", "status": "error"},
+    {"time": "2026-03-16T09:10:00", "action": "엑셀 변환", "detail": "다비치안경 OMS 73건 변환 완료", "status": "success"},
+    {"time": "2026-03-16T09:05:00", "action": "시스템 시작", "detail": "OMS-ERP 통합 자동화 시스템 가동", "status": "info"}
+  ]
+}

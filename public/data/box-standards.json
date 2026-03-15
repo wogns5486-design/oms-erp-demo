@@ -1,0 +1,6 @@
+[
+  {"id":"bs1","category":"frame","itemCode":"P00001","itemName":"안경테 (일반)","maxPerBox":20},
+  {"id":"bs2","category":"lens","itemCode":"L00001","itemName":"렌즈 (일반)","maxPerBox":50},
+  {"id":"bs3","category":"case","itemCode":"A00001","itemName":"안경케이스","maxPerBox":100},
+  {"id":"bs4","category":"accessory","itemCode":"A00007","itemName":"안경닦이/소품","maxPerBox":200}
+]
