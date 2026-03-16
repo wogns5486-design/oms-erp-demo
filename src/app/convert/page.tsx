@@ -17,10 +17,7 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { parseExcelFile, type ParsedSheet } from "@/lib/excel/parser";
-import { identifyChain, getChainLabel, type ChainType } from "@/lib/excel/chain-identifier";
-import { transformToEcount } from "@/lib/excel/ecount-transformer";
-import { downloadEcountExcel } from "@/lib/excel/ecount-writer";
-import { useMappingStore } from "@/stores/mapping-store";
+import { getChainLabel, type ChainType } from "@/lib/excel/chain-identifier";
 import type { EcountOutputRow } from "@/lib/types";
 
 interface FileResult {
@@ -34,8 +31,6 @@ export default function ConvertPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<FileResult[]>([]);
   const [sending, setSending] = useState(false);
-  const addCustomer = useMappingStore((s) => s.addCustomer);
-  const addProduct = useMappingStore((s) => s.addProduct);
 
   const handleFiles = useCallback(async (fileList: FileList | File[]) => {
     const newFiles = Array.from(fileList).filter(
@@ -64,12 +59,31 @@ export default function ConvertPage() {
     const allResults: FileResult[] = [];
     for (const file of files) {
       try {
+        // 원본 시트 데이터는 클라이언트에서 파싱
         const sheets = await parseExcelFile(file);
-        for (const sheet of sheets) {
-          const chain = identifyChain(sheet);
-          const converted = transformToEcount(sheet, chain);
-          allResults.push({ sheet, chain, converted });
+        const sheet = sheets[0];
+
+        // 변환 결과는 서버에서 받아옴
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/convert/upload", {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          toast.error(`${file.name} 변환 실패: ${errData.message ?? res.statusText}`);
+          continue;
         }
+        const data = await res.json();
+        // data.data: { chain, totalRows, unmappedCount, rows }
+        const { chain, rows } = data.data as {
+          chain: ChainType;
+          totalRows: number;
+          unmappedCount: number;
+          rows: EcountOutputRow[];
+        };
+        allResults.push({ sheet, chain, converted: rows });
       } catch {
         toast.error(`${file.name} 파싱 실패`);
       }
@@ -86,25 +100,43 @@ export default function ConvertPage() {
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     const allRows = results.flatMap((r) => r.converted);
-    downloadEcountExcel(allRows, `이카운트_변환_${new Date().toISOString().slice(0, 10)}`);
+    const res = await fetch("/api/convert/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows: allRows }),
+    });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `이카운트_변환_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
     toast.success("엑셀 다운로드 완료");
   };
 
-  const handleMockSend = () => {
+  const handleMockSend = async () => {
     setSending(true);
-    setTimeout(() => {
+    try {
+      const allRows = results.flatMap((r) => r.converted);
+      const res = await fetch("/api/convert/send-ecount", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: allRows }),
+      });
+      const data = await res.json();
+      if (data.success) toast.success("이카운트 전송 성공!");
+      else toast.error(data.message || "이카운트 전송 실패");
+    } catch {
+      toast.error("이카운트 전송 실패");
+    } finally {
       setSending(false);
-      if (Math.random() < 0.9) {
-        toast.success("이카운트 전송 성공!");
-      } else {
-        toast.error("이카운트 전송 실패. 다시 시도해주세요.");
-      }
-    }, 2000);
+    }
   };
 
-  const handleInlineMapping = (
+  const handleInlineMapping = async (
     resultIdx: number,
     rowIdx: number,
     field: "customerCode" | "itemCode",
@@ -116,30 +148,14 @@ export default function ConvertPage() {
       if (field === "customerCode") {
         row.customerCode = value;
         if (value) {
-          row._unmapped =
-            !value || !row.itemCode ? true : false;
+          row._unmapped = !value || !row.itemCode ? true : false;
           row._unmappedField = !row.itemCode ? "product" : undefined;
-          addCustomer({
-            omsName: row.customerName,
-            ecountCode: value,
-            ecountName: row.customerName,
-            chain: "davichi",
-          });
         }
       } else {
         row.itemCode = value;
         if (value) {
-          row._unmapped =
-            !row.customerCode || !value ? true : false;
+          row._unmapped = !row.customerCode || !value ? true : false;
           row._unmappedField = !row.customerCode ? "customer" : undefined;
-          addProduct({
-            omsProductName: row.itemName,
-            ecountItemCode: value,
-            ecountItemName: row.itemName,
-            spec: row.spec,
-            unitPrice: row.unitPrice,
-            category: "etc",
-          });
         }
       }
       if (row.customerCode && row.itemCode) {
@@ -154,6 +170,40 @@ export default function ConvertPage() {
       };
       return next;
     });
+
+    if (!value) return;
+
+    try {
+      if (field === "customerCode") {
+        const row = results[resultIdx].converted[rowIdx];
+        await fetch("/api/customers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            omsName: row.customerName,
+            ecountCode: value,
+            ecountName: row.customerName,
+            chain: "davichi",
+          }),
+        });
+      } else {
+        const row = results[resultIdx].converted[rowIdx];
+        await fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            omsProductName: row.itemName,
+            ecountItemCode: value,
+            ecountItemName: row.itemName,
+            spec: row.spec,
+            unitPrice: row.unitPrice,
+            category: "etc",
+          }),
+        });
+      }
+    } catch {
+      // 매핑 저장 실패는 조용히 처리 (UI 상태는 이미 반영됨)
+    }
   };
 
   const totalRows = results.reduce((s, r) => s + r.converted.length, 0);

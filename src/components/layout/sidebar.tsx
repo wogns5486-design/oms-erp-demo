@@ -23,7 +23,6 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-import { resetAllStores } from "@/stores/use-hydration";
 import { toast } from "sonner";
 
 const menuItems = [
@@ -43,9 +42,11 @@ export function Sidebar() {
   const handleReset = async () => {
     setResetting(true);
     try {
-      await resetAllStores();
-      toast.success("데모 데이터가 초기화되었습니다.");
+      const res = await fetch("/api/reset", { method: "POST" });
+      if (!res.ok) throw new Error();
+      toast.success("데이터가 초기화되었습니다.");
       setResetOpen(false);
+      window.location.reload();
     } catch {
       toast.error("초기화 중 오류가 발생했습니다.");
     } finally {

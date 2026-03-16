@@ -1,14 +1,25 @@
-import type { EcountOutputRow } from "@/lib/types";
+import type { EcountOutputRow, CustomerMapping, ProductMapping } from "@/lib/types";
 import type { ParsedSheet } from "./parser";
 import type { ChainType } from "./chain-identifier";
-import { useMappingStore } from "@/stores/mapping-store";
 
+/** 매핑 조회 함수 인터페이스 (의존성 주입) */
+export interface MappingLookup {
+  findCustomer: (omsName: string) => CustomerMapping | undefined;
+  findProduct: (omsName: string) => ProductMapping | undefined;
+}
+
+/**
+ * OMS 엑셀 데이터를 이카운트 ERP 형식으로 변환
+ * @param sheet - 파싱된 엑셀 시트
+ * @param chain - 프랜차이즈 유형 (davichi, manager, unknown)
+ * @param lookup - 거래처/품목 매핑 조회 함수
+ */
 export function transformToEcount(
   sheet: ParsedSheet,
-  chain: ChainType
+  chain: ChainType,
+  lookup: MappingLookup
 ): EcountOutputRow[] {
-  const { findCustomerByOmsName, findProductByOmsName } =
-    useMappingStore.getState();
+  const { findCustomer, findProduct } = lookup;
 
   return sheet.rows.map((row) => {
     let omsCustomerName = "";
@@ -31,8 +42,8 @@ export function transformToEcount(
       quantity = Number(row["수량"] ?? 0);
     }
 
-    const customer = findCustomerByOmsName(omsCustomerName);
-    const product = findProductByOmsName(omsProductName);
+    const customer = findCustomer(omsCustomerName);
+    const product = findProduct(omsProductName);
 
     const customerMapped = !!(customer && customer.ecountCode);
     const productMapped = !!(product && product.ecountItemCode);

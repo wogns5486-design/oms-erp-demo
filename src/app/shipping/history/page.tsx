@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
-import { useShippingStore } from "@/stores/shipping-store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +18,17 @@ import { format } from "date-fns";
 
 type StatusFilter = "all" | "active" | "reissued" | "cancelled";
 
+interface InvoiceRow {
+  id: string;
+  invoiceNumber: string;
+  status: string;
+  shipmentId: string;
+  recipientName: string;
+  customerName: string;
+  boxNumber: number;
+  issuedAt: string;
+}
+
 const statusLabels: Record<string, string> = {
   active: "활성",
   reissued: "재발행",
@@ -33,26 +43,55 @@ const statusVariants: Record<string, "default" | "secondary" | "destructive" | "
 
 export default function ShippingHistoryPage() {
   const [filter, setFilter] = useState<StatusFilter>("all");
-  const getAllInvoices = useShippingStore((s) => s.getAllInvoices);
-  const reissueInvoice = useShippingStore((s) => s.reissueInvoice);
+  const [allInvoices, setAllInvoices] = useState<InvoiceRow[]>([]);
 
-  const allInvoices = useMemo(() => getAllInvoices(), [getAllInvoices]);
+  const fetchInvoices = useCallback(async (status?: string) => {
+    try {
+      const params = new URLSearchParams({ size: "200" });
+      if (status && status !== "all") params.set("status", status);
+      const res = await fetch(`/api/invoices?${params.toString()}`);
+      const data = await res.json();
+      setAllInvoices(data.data ?? []);
+    } catch {
+      toast.error("송장 목록 조회 실패");
+    }
+  }, []);
 
-  const filtered = useMemo(() => {
-    if (filter === "all") return allInvoices;
-    return allInvoices.filter((inv) => inv.status === filter);
-  }, [allInvoices, filter]);
+  useEffect(() => {
+    fetchInvoices();
+  }, [fetchInvoices]);
 
-  const handleReissue = (shipmentId: string, invoiceNumber: string) => {
-    const newNumber = reissueInvoice(shipmentId, invoiceNumber);
-    toast.success(`재발행 완료: ${newNumber}`);
+  const filtered =
+    filter === "all"
+      ? allInvoices
+      : allInvoices.filter((inv) => inv.status === filter);
+
+  const handleReissue = async (id: string, shipmentId: string, invoiceNumber: string) => {
+    try {
+      const res = await fetch(`/api/invoices/${id}/reissue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shipmentId, invoiceNumber }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.message || "재발행 실패");
+        return;
+      }
+      toast.success(`재발행 완료: ${data.data.newInvoiceNumber}`);
+      await fetchInvoices();
+    } catch {
+      toast.error("재발행 실패");
+    }
   };
+
+  const countByStatus = (s: string) => allInvoices.filter((i) => i.status === s).length;
 
   const filters: { value: StatusFilter; label: string }[] = [
     { value: "all", label: `전체 (${allInvoices.length})` },
-    { value: "active", label: `활성 (${allInvoices.filter((i) => i.status === "active").length})` },
-    { value: "reissued", label: `재발행 (${allInvoices.filter((i) => i.status === "reissued").length})` },
-    { value: "cancelled", label: `취소 (${allInvoices.filter((i) => i.status === "cancelled").length})` },
+    { value: "active", label: `활성 (${countByStatus("active")})` },
+    { value: "reissued", label: `재발행 (${countByStatus("reissued")})` },
+    { value: "cancelled", label: `취소 (${countByStatus("cancelled")})` },
   ];
 
   return (
@@ -114,7 +153,7 @@ export default function ShippingHistoryPage() {
                         size="sm"
                         className="gap-1"
                         onClick={() =>
-                          handleReissue(inv.shipmentId, inv.invoiceNumber)
+                          handleReissue(inv.id, inv.shipmentId, inv.invoiceNumber)
                         }
                       >
                         <RefreshCw className="size-3" />

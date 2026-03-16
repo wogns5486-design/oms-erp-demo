@@ -1,11 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Package, Truck } from "lucide-react";
 import { toast } from "sonner";
-import { useShippingStore } from "@/stores/shipping-store";
-import { useSettingsStore } from "@/stores/settings-store";
-import { splitBoxes } from "@/lib/shipping/box-splitter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,22 +15,46 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { BoxSplitResult } from "@/lib/types";
+import type { Shipment, BoxSplitResult, BoxStandard } from "@/lib/types";
 
 export default function ShippingIssuePage() {
   const [date, setDate] = useState("2026-03-16");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<BoxSplitResult[]>([]);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [boxStandards, setBoxStandards] = useState<BoxStandard[]>([]);
 
-  const getByDate = useShippingStore((s) => s.getByDate);
-  const issueInvoice = useShippingStore((s) => s.issueInvoice);
-  const boxStandards = useSettingsStore((s) => s.boxStandards);
+  const pending = shipments.filter((s) => s.status === "pending");
 
-  const shipments = useMemo(() => getByDate(date), [getByDate, date]);
-  const pending = useMemo(
-    () => shipments.filter((s) => s.status === "pending"),
-    [shipments]
-  );
+  const fetchShipments = useCallback(async (d: string) => {
+    try {
+      const res = await fetch(`/api/shipments?date=${d}`);
+      const data = await res.json();
+      setShipments(data.data ?? []);
+    } catch {
+      toast.error("출고 목록 조회 실패");
+    }
+  }, []);
+
+  const fetchBoxStandards = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings/box-standards");
+      const data = await res.json();
+      setBoxStandards(data.data ?? []);
+    } catch {
+      // 박스 기준 로드 실패 시 빈 배열 유지
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBoxStandards();
+  }, [fetchBoxStandards]);
+
+  useEffect(() => {
+    fetchShipments(date);
+    setSelected(new Set());
+    setPreview([]);
+  }, [date, fetchShipments]);
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -67,47 +88,41 @@ export default function ShippingIssuePage() {
     return total;
   };
 
-  const handlePreview = () => {
-    const results: BoxSplitResult[] = [];
-    for (const id of selected) {
-      const shipment = pending.find((s) => s.id === id);
-      if (!shipment) continue;
-      results.push(
-        splitBoxes({
-          recipientName: shipment.recipientName,
-          items: shipment.items.map((i) => ({ ...i })),
-          boxStandards,
-        })
-      );
+  const handlePreview = async () => {
+    try {
+      const previewResults: BoxSplitResult[] = [];
+      for (const id of selected) {
+        const res = await fetch(`/api/shipments/${id}/split-preview`);
+        const data = await res.json();
+        if (data.data) {
+          previewResults.push(data.data as BoxSplitResult);
+        }
+      }
+      setPreview(previewResults);
+    } catch {
+      toast.error("박스 분할 미리보기 실패");
     }
-    setPreview(results);
   };
 
-  const handleIssue = () => {
-    let totalInvoices = 0;
-    for (const id of selected) {
-      const shipment = pending.find((s) => s.id === id);
-      if (!shipment) continue;
-      const result = splitBoxes({
-        recipientName: shipment.recipientName,
-        items: shipment.items.map((i) => ({ ...i })),
-        boxStandards,
+  const handleIssue = async () => {
+    try {
+      const res = await fetch("/api/invoices/issue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shipmentIds: Array.from(selected) }),
       });
-      const invoices = issueInvoice(
-        id,
-        result.boxes.map((b) => ({
-          boxNumber: b.boxNumber,
-          items: b.items.map((i) => ({
-            itemName: i.itemName,
-            quantity: i.quantity,
-          })),
-        }))
-      );
-      totalInvoices += invoices.length;
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.message || "송장 발행 실패");
+        return;
+      }
+      toast.success(`송장 ${data.data.totalIssued}건 발행 완료!`);
+      setSelected(new Set());
+      setPreview([]);
+      await fetchShipments(date);
+    } catch {
+      toast.error("송장 발행 실패");
     }
-    toast.success(`송장 ${totalInvoices}건 발행 완료!`);
-    setSelected(new Set());
-    setPreview([]);
   };
 
   return (
@@ -120,11 +135,7 @@ export default function ShippingIssuePage() {
         <Input
           type="date"
           value={date}
-          onChange={(e) => {
-            setDate(e.target.value);
-            setSelected(new Set());
-            setPreview([]);
-          }}
+          onChange={(e) => setDate(e.target.value)}
           className="w-44"
         />
         <Badge variant="secondary">

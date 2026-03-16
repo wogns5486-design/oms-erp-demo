@@ -2,7 +2,10 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useDashboardStore } from "@/stores/dashboard-store";
+import { useState, useEffect } from "react";
+import { toast } from "sonner";
+import { apiFetch } from "@/lib/api/client";
+import type { DashboardStats } from "@/lib/types";
 import {
   FileSpreadsheet,
   CheckCircle,
@@ -60,8 +63,42 @@ const statusColor: Record<string, string> = {
   info: "bg-blue-100 text-blue-700",
 };
 
+const kpiSkeleton = (
+  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    {Array.from({ length: 4 }).map((_, i) => (
+      <Card key={i} className="bg-white shadow-sm border">
+        <CardContent className="flex items-center gap-4">
+          <div className="h-12 w-12 animate-pulse rounded-lg bg-gray-200" />
+          <div className="space-y-2">
+            <div className="h-3 w-20 animate-pulse rounded bg-gray-200" />
+            <div className="h-6 w-12 animate-pulse rounded bg-gray-200" />
+          </div>
+        </CardContent>
+      </Card>
+    ))}
+  </div>
+);
+
 export default function DashboardPage() {
-  const stats = useDashboardStore((s) => s.stats);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch<DashboardStats>("/api/dashboard/stats")
+      .then(setStats)
+      .catch((err) => toast.error(err.message ?? "대시보드 데이터를 불러오지 못했습니다."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-gray-900">대시보드</h1>
+        {kpiSkeleton}
+        <div className="h-80 animate-pulse rounded-lg bg-gray-200" />
+      </div>
+    );
+  }
 
   if (!stats) return null;
 

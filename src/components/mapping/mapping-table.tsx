@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { Search, Plus, AlertTriangle, Download, Edit2 } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
-import { useMappingStore } from "@/stores/mapping-store";
+import { apiFetch } from "@/lib/api/client";
 import {
   Table,
   TableBody,
@@ -39,15 +39,9 @@ interface MappingTableProps {
 const PAGE_SIZE = 20;
 
 export function MappingTable({ type }: MappingTableProps) {
-  const customers = useMappingStore((s) => s.customers);
-  const products = useMappingStore((s) => s.products);
-  const addCustomer = useMappingStore((s) => s.addCustomer);
-  const updateCustomer = useMappingStore((s) => s.updateCustomer);
-  const deleteCustomer = useMappingStore((s) => s.deleteCustomer);
-  const addProduct = useMappingStore((s) => s.addProduct);
-  const updateProduct = useMappingStore((s) => s.updateProduct);
-  const deleteProduct = useMappingStore((s) => s.deleteProduct);
-
+  const [data, setData] = useState<(CustomerMapping | ProductMapping)[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -65,39 +59,36 @@ export function MappingTable({ type }: MappingTableProps) {
     return () => clearTimeout(timer);
   }, [search]);
 
-  const items = type === "customers" ? customers : products;
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const endpoint = type === "customers" ? "/api/customers" : "/api/products";
+      const params = new URLSearchParams({ page: String(page), size: String(PAGE_SIZE) });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      const result = await apiFetch<{ data: any[]; pagination: { total: number } }>(
+        `${endpoint}?${params}`
+      );
+      setData(result.data);
+      setTotal(result.pagination.total);
+    } catch {
+      toast.error("데이터 로드 실패");
+    } finally {
+      setLoading(false);
+    }
+  }, [type, page, debouncedSearch]);
 
-  const filtered = useMemo(() => {
-    if (!debouncedSearch) return items;
-    const q = debouncedSearch.toLowerCase();
-    return items.filter((item) => {
-      if (type === "customers") {
-        const c = item as CustomerMapping;
-        return (
-          c.omsName.toLowerCase().includes(q) ||
-          c.ecountCode.toLowerCase().includes(q) ||
-          c.ecountName.toLowerCase().includes(q)
-        );
-      } else {
-        const p = item as ProductMapping;
-        return (
-          p.omsProductName.toLowerCase().includes(q) ||
-          p.ecountItemCode.toLowerCase().includes(q) ||
-          p.ecountItemName.toLowerCase().includes(q)
-        );
-      }
-    });
-  }, [items, debouncedSearch, type]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const unmappedCount = useMemo(() => {
     if (type === "customers") {
-      return customers.filter((c) => !c.ecountCode).length;
+      return (data as CustomerMapping[]).filter((c) => !c.ecountCode).length;
     }
-    return products.filter((p) => !p.ecountItemCode).length;
-  }, [customers, products, type]);
+    return (data as ProductMapping[]).filter((p) => !p.ecountItemCode).length;
+  }, [data, type]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const isUnmapped = useCallback(
     (item: CustomerMapping | ProductMapping) => {
@@ -107,50 +98,74 @@ export function MappingTable({ type }: MappingTableProps) {
     [type]
   );
 
-  const handleDelete = (id: string) => {
-    if (type === "customers") deleteCustomer(id);
-    else deleteProduct(id);
-    toast.success("삭제되었습니다.");
+  const handleDelete = async (id: string) => {
+    try {
+      const endpoint = type === "customers" ? `/api/customers/${id}` : `/api/products/${id}`;
+      await apiFetch(endpoint, { method: "DELETE" });
+      toast.success("삭제되었습니다.");
+      await fetchData();
+    } catch {
+      toast.error("삭제 실패");
+    }
   };
 
-  const handleBulkSave = () => {
-    for (const [id, value] of Object.entries(bulkValues)) {
-      if (!value) continue;
-      if (type === "customers") {
-        updateCustomer(id, { ecountCode: value });
-      } else {
-        updateProduct(id, { ecountItemCode: value });
+  const handleBulkSave = async () => {
+    try {
+      const updates = Object.entries(bulkValues)
+        .filter(([, value]) => value)
+        .map(([id, value]) =>
+          type === "customers" ? { id, ecountCode: value } : { id, ecountItemCode: value }
+        );
+      if (updates.length === 0) {
+        setBulkMode(false);
+        return;
       }
+      const endpoint = type === "customers" ? "/api/customers/bulk" : "/api/products/bulk";
+      await apiFetch(endpoint, {
+        method: "PUT",
+        body: JSON.stringify({ updates }),
+      });
+      setBulkMode(false);
+      setBulkValues({});
+      toast.success("일괄 수정 완료");
+      await fetchData();
+    } catch {
+      toast.error("일괄 수정 실패");
     }
-    setBulkMode(false);
-    setBulkValues({});
-    toast.success("일괄 수정 완료");
   };
 
-  const handleDownloadErrors = () => {
-    const unmapped = items.filter((item) => isUnmapped(item));
-    let exportData;
-    if (type === "customers") {
-      exportData = (unmapped as CustomerMapping[]).map((c) => ({
-        OMS명: c.omsName,
-        이카운트코드: c.ecountCode || "(미매핑)",
-        이카운트명: c.ecountName,
-        체인: c.chain,
-      }));
-    } else {
-      exportData = (unmapped as ProductMapping[]).map((p) => ({
-        OMS품명: p.omsProductName,
-        이카운트코드: p.ecountItemCode || "(미매핑)",
-        이카운트명: p.ecountItemName,
-        규격: p.spec,
-        카테고리: p.category,
-      }));
+  const handleDownloadErrors = async () => {
+    try {
+      const endpoint = type === "customers" ? "/api/customers" : "/api/products";
+      const params = new URLSearchParams({ page: "1", size: "9999" });
+      const result = await apiFetch<{ data: any[] }>(`${endpoint}?${params}`);
+      const allData = result.data;
+      const unmapped = allData.filter((item) => isUnmapped(item));
+      let exportData;
+      if (type === "customers") {
+        exportData = (unmapped as CustomerMapping[]).map((c) => ({
+          OMS명: c.omsName,
+          이카운트코드: c.ecountCode || "(미매핑)",
+          이카운트명: c.ecountName,
+          체인: c.chain,
+        }));
+      } else {
+        exportData = (unmapped as ProductMapping[]).map((p) => ({
+          OMS품명: p.omsProductName,
+          이카운트코드: p.ecountItemCode || "(미매핑)",
+          이카운트명: p.ecountItemName,
+          규격: p.spec,
+          카테고리: p.category,
+        }));
+      }
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "미매핑");
+      XLSX.writeFile(wb, `미매핑_${type === "customers" ? "거래처" : "품목"}.xlsx`);
+      toast.success("오류 목록 다운로드 완료");
+    } catch {
+      toast.error("다운로드 실패");
     }
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "미매핑");
-    XLSX.writeFile(wb, `미매핑_${type === "customers" ? "거래처" : "품목"}.xlsx`);
-    toast.success("오류 목록 다운로드 완료");
   };
 
   return (
@@ -229,107 +244,16 @@ export function MappingTable({ type }: MappingTableProps) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {paged.map((item) => {
-              const unmapped = isUnmapped(item);
-              return (
-                <TableRow
-                  key={item.id}
-                  className={unmapped ? "bg-red-50" : ""}
+            {loading ? (
+              <TableRow>
+                <TableCell
+                  colSpan={type === "customers" ? 5 : 6}
+                  className="text-center text-gray-500 py-8"
                 >
-                  {type === "customers" ? (
-                    <>
-                      <TableCell>
-                        {(item as CustomerMapping).omsName}
-                      </TableCell>
-                      <TableCell>
-                        {bulkMode && unmapped ? (
-                          <Input
-                            className="h-7 w-28 text-xs"
-                            placeholder="코드 입력"
-                            value={bulkValues[item.id] ?? ""}
-                            onChange={(e) =>
-                              setBulkValues((prev) => ({
-                                ...prev,
-                                [item.id]: e.target.value,
-                              }))
-                            }
-                          />
-                        ) : (
-                          (item as CustomerMapping).ecountCode || (
-                            <Badge variant="destructive">미매핑</Badge>
-                          )
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {(item as CustomerMapping).ecountName}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {(item as CustomerMapping).chain === "davichi"
-                            ? "다비치"
-                            : "안경매니저"}
-                        </Badge>
-                      </TableCell>
-                    </>
-                  ) : (
-                    <>
-                      <TableCell>
-                        {(item as ProductMapping).omsProductName}
-                      </TableCell>
-                      <TableCell>
-                        {bulkMode && unmapped ? (
-                          <Input
-                            className="h-7 w-28 text-xs"
-                            placeholder="코드 입력"
-                            value={bulkValues[item.id] ?? ""}
-                            onChange={(e) =>
-                              setBulkValues((prev) => ({
-                                ...prev,
-                                [item.id]: e.target.value,
-                              }))
-                            }
-                          />
-                        ) : (
-                          (item as ProductMapping).ecountItemCode || (
-                            <Badge variant="destructive">미매핑</Badge>
-                          )
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {(item as ProductMapping).ecountItemName}
-                      </TableCell>
-                      <TableCell>{(item as ProductMapping).spec}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">
-                          {(item as ProductMapping).category}
-                        </Badge>
-                      </TableCell>
-                    </>
-                  )}
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-sm hover:bg-gray-100"
-                      >
-                        ...
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent>
-                        <DropdownMenuItem onClick={() => setEditItem(item)}>
-                          수정
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={() => handleDelete(item.id)}
-                        >
-                          삭제
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-            {paged.length === 0 && (
+                  로딩 중...
+                </TableCell>
+              </TableRow>
+            ) : data.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={type === "customers" ? 5 : 6}
@@ -338,6 +262,107 @@ export function MappingTable({ type }: MappingTableProps) {
                   데이터가 없습니다.
                 </TableCell>
               </TableRow>
+            ) : (
+              data.map((item) => {
+                const unmapped = isUnmapped(item);
+                return (
+                  <TableRow
+                    key={item.id}
+                    className={unmapped ? "bg-red-50" : ""}
+                  >
+                    {type === "customers" ? (
+                      <>
+                        <TableCell>
+                          {(item as CustomerMapping).omsName}
+                        </TableCell>
+                        <TableCell>
+                          {bulkMode && unmapped ? (
+                            <Input
+                              className="h-7 w-28 text-xs"
+                              placeholder="코드 입력"
+                              value={bulkValues[item.id] ?? ""}
+                              onChange={(e) =>
+                                setBulkValues((prev) => ({
+                                  ...prev,
+                                  [item.id]: e.target.value,
+                                }))
+                              }
+                            />
+                          ) : (
+                            (item as CustomerMapping).ecountCode || (
+                              <Badge variant="destructive">미매핑</Badge>
+                            )
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {(item as CustomerMapping).ecountName}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {(item as CustomerMapping).chain === "davichi"
+                              ? "다비치"
+                              : "안경매니저"}
+                          </Badge>
+                        </TableCell>
+                      </>
+                    ) : (
+                      <>
+                        <TableCell>
+                          {(item as ProductMapping).omsProductName}
+                        </TableCell>
+                        <TableCell>
+                          {bulkMode && unmapped ? (
+                            <Input
+                              className="h-7 w-28 text-xs"
+                              placeholder="코드 입력"
+                              value={bulkValues[item.id] ?? ""}
+                              onChange={(e) =>
+                                setBulkValues((prev) => ({
+                                  ...prev,
+                                  [item.id]: e.target.value,
+                                }))
+                              }
+                            />
+                          ) : (
+                            (item as ProductMapping).ecountItemCode || (
+                              <Badge variant="destructive">미매핑</Badge>
+                            )
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {(item as ProductMapping).ecountItemName}
+                        </TableCell>
+                        <TableCell>{(item as ProductMapping).spec}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">
+                            {(item as ProductMapping).category}
+                          </Badge>
+                        </TableCell>
+                      </>
+                    )}
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-sm hover:bg-gray-100"
+                        >
+                          ...
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent>
+                          <DropdownMenuItem onClick={() => setEditItem(item)}>
+                            수정
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onClick={() => handleDelete(item.id)}
+                          >
+                            삭제
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
@@ -346,8 +371,8 @@ export function MappingTable({ type }: MappingTableProps) {
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">
-          전체 {filtered.length}건 중 {(page - 1) * PAGE_SIZE + 1}-
-          {Math.min(page * PAGE_SIZE, filtered.length)}건
+          전체 {total}건 중 {total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1}-
+          {Math.min(page * PAGE_SIZE, total)}건
         </p>
         <div className="flex gap-1">
           <Button
@@ -392,14 +417,19 @@ export function MappingTable({ type }: MappingTableProps) {
         type={type}
         open={addOpen}
         onOpenChange={setAddOpen}
-        onSave={(data) => {
-          if (type === "customers") {
-            addCustomer(data as Omit<CustomerMapping, "id" | "createdAt" | "updatedAt">);
-          } else {
-            addProduct(data as Omit<ProductMapping, "id" | "createdAt" | "updatedAt">);
+        onSave={async (formData) => {
+          try {
+            const endpoint = type === "customers" ? "/api/customers" : "/api/products";
+            await apiFetch(endpoint, {
+              method: "POST",
+              body: JSON.stringify(formData),
+            });
+            setAddOpen(false);
+            toast.success("추가되었습니다.");
+            await fetchData();
+          } catch {
+            toast.error("추가 실패");
           }
-          setAddOpen(false);
-          toast.success("추가되었습니다.");
         }}
       />
 
@@ -410,14 +440,22 @@ export function MappingTable({ type }: MappingTableProps) {
           open={!!editItem}
           onOpenChange={(open) => !open && setEditItem(null)}
           initialData={editItem}
-          onSave={(data) => {
-            if (type === "customers") {
-              updateCustomer(editItem.id, data as Partial<CustomerMapping>);
-            } else {
-              updateProduct(editItem.id, data as Partial<ProductMapping>);
+          onSave={async (formData) => {
+            try {
+              const endpoint =
+                type === "customers"
+                  ? `/api/customers/${editItem.id}`
+                  : `/api/products/${editItem.id}`;
+              await apiFetch(endpoint, {
+                method: "PUT",
+                body: JSON.stringify(formData),
+              });
+              setEditItem(null);
+              toast.success("수정되었습니다.");
+              await fetchData();
+            } catch {
+              toast.error("수정 실패");
             }
-            setEditItem(null);
-            toast.success("수정되었습니다.");
           }}
         />
       )}

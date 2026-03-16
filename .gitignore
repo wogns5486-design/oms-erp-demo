@@ -40,3 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .omc/
+
+# SQLite DB
+/data/*.db
+/data/*.db-wal
+/data/*.db-shm

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Save } from "lucide-react";
 import { toast } from "sonner";
-import { useSettingsStore } from "@/stores/settings-store";
+import { apiFetch } from "@/lib/api/client";
+import type { BoxStandard } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,11 +19,16 @@ import {
 } from "@/components/ui/table";
 
 export default function SettingsPage() {
-  const boxStandards = useSettingsStore((s) => s.boxStandards);
-  const updateStandard = useSettingsStore((s) => s.updateStandard);
+  const [boxStandards, setBoxStandards] = useState<BoxStandard[]>([]);
   const [editValues, setEditValues] = useState<Record<string, string>>({});
 
-  const handleSave = (id: string) => {
+  useEffect(() => {
+    apiFetch<BoxStandard[]>("/api/settings/box-standards")
+      .then(setBoxStandards)
+      .catch((err) => toast.error(err.message ?? "포장 기준을 불러오지 못했습니다."));
+  }, []);
+
+  const handleSave = async (id: string) => {
     const val = editValues[id];
     if (val === undefined) return;
     const num = parseInt(val, 10);
@@ -30,13 +36,23 @@ export default function SettingsPage() {
       toast.error("유효한 숫자를 입력해주세요.");
       return;
     }
-    updateStandard(id, num);
-    setEditValues((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    toast.success("포장 기준이 수정되었습니다.");
+    try {
+      await apiFetch(`/api/settings/box-standards/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ maxPerBox: num }),
+      });
+      setBoxStandards((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, maxPerBox: num } : s))
+      );
+      setEditValues((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      toast.success("포장 기준이 수정되었습니다.");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "저장에 실패했습니다.");
+    }
   };
 
   return (
